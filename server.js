@@ -7,10 +7,12 @@ const multer = require('multer');
 require('dotenv').config();
 
 const app = express();
+
+// Разрешаем запросы с твоего фронтенда
 app.use(cors());
 app.use(express.json());
 
-// Настройка Cloudinary (Хранилище PDF)
+// 1. КОНФИГУРАЦИЯ CLOUDINARY
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.API_KEY,
@@ -19,17 +21,27 @@ cloudinary.config({
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: { folder: 'unida_papers', allowedFormats: ['pdf', 'jpg', 'png'] },
+  params: {
+    folder: 'unida_papers',
+    resource_type: 'auto', // Важно для поддержки PDF
+    allowed_formats: ['pdf', 'jpg', 'png']
+  },
 });
 const upload = multer({ storage: storage });
 
-// Подключение к MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Юнида подключена к БД'))
-  .catch(err => console.error(err));
+// 2. ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
+mongoose.set('bufferCommands', false); // Отключаем ожидание, чтобы сразу видеть ошибки
 
-// Схемы данных
-const Paper = mongoose.model('Paper', new mongoose.Schema({
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000 // Ждать только 5 секунд
+})
+.then(() => console.log('✅ База данных ЮНИДА успешно подключена!'))
+.catch(err => {
+  console.error('❌ ОШИБКА ПОДКЛЮЧЕНИЯ К БД:', err.message);
+});
+
+// 3. СХЕМА ДАННЫХ
+const paperSchema = new mongoose.Schema({
   title: String,
   desc: String,
   category: String,
@@ -39,22 +51,49 @@ const Paper = mongoose.model('Paper', new mongoose.Schema({
   date: { type: String, default: () => new Date().toLocaleDateString('ru-RU') },
   likes: { type: Number, default: 0 },
   comments: { type: Number, default: 0 }
-}));
+});
 
-// API Эндпоинты
+const Paper = mongoose.model('Paper', paperSchema);
+
+// 4. ЭНДПОИНТЫ (API)
+
+// Получить все работы
 app.get('/api/papers', async (req, res) => {
-  const papers = await Paper.find().sort({ _id: -1 });
-  res.json(papers);
+  try {
+    const papers = await Paper.find().sort({ _id: -1 });
+    res.json(papers);
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при получении данных' });
+  }
 });
 
+// Загрузить новую работу
 app.post('/api/papers', upload.single('file'), async (req, res) => {
-  const paper = new Paper({
-    ...req.body,
-    pdfUrl: req.file ? req.file.path : ''
-  });
-  await paper.save();
-  res.status(201).json(paper);
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Файл не был загружен' });
+    }
+
+    const newPaper = new Paper({
+      title: req.body.title,
+      desc: req.body.desc,
+      category: req.body.category,
+      author: req.body.author,
+      authorAvatar: req.body.authorAvatar,
+      pdfUrl: req.file.path // Ссылка на файл в облаке Cloudinary
+    });
+
+    await newPaper.save();
+    console.log('✅ Работа опубликована:', newPaper.title);
+    res.status(201).json(newPaper);
+  } catch (err) {
+    console.error('❌ Ошибка публикации:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
+// 5. ЗАПУСК СЕРВЕРА
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Сервер ЮНИДА запущен на порту ${PORT}`);
+});
