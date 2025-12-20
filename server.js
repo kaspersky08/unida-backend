@@ -8,8 +8,13 @@ require('dotenv').config();
 
 const app = express();
 
-// Разрешаем запросы с твоего фронтенда
-app.use(cors());
+// Настройка CORS: разрешаем DELETE и другие методы
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'DELETE', 'UPDATE', 'PUT', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 // 1. КОНФИГУРАЦИЯ CLOUDINARY
@@ -21,79 +26,73 @@ cloudinary.config({
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: {
-    folder: 'unida_papers',
-    resource_type: 'auto', // Важно для поддержки PDF
-    allowed_formats: ['pdf', 'jpg', 'png']
+  params: async (req, file) => {
+    return {
+      folder: 'unida_papers',
+      resource_type: 'auto',
+      public_id: file.fieldname + '-' + Date.now(),
+    };
   },
 });
 const upload = multer({ storage: storage });
 
-// 2. ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
-mongoose.set('bufferCommands', false); // Отключаем ожидание, чтобы сразу видеть ошибки
+// 2. ПОДКЛЮЧЕНИЕ К БД
+mongoose.set('bufferCommands', false);
+mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
+  .then(() => console.log('✅ База данных подключена'))
+  .catch(err => console.error('❌ Ошибка БД:', err.message));
 
-mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000 // Ждать только 5 секунд
-})
-.then(() => console.log('✅ База данных ЮНИДА успешно подключена!'))
-.catch(err => {
-  console.error('❌ ОШИБКА ПОДКЛЮЧЕНИЯ К БД:', err.message);
-});
-
-// 3. СХЕМА ДАННЫХ
-const paperSchema = new mongoose.Schema({
+// 3. МОДЕЛЬ
+const Paper = mongoose.model('Paper', new mongoose.Schema({
   title: String,
   desc: String,
   category: String,
   author: String,
   authorAvatar: String,
   pdfUrl: String,
-  date: { type: String, default: () => new Date().toLocaleDateString('ru-RU') },
-  likes: { type: Number, default: 0 },
-  comments: { type: Number, default: 0 }
-});
+  date: { type: String, default: () => new Date().toLocaleDateString('ru-RU') }
+}));
 
-const Paper = mongoose.model('Paper', paperSchema);
+// 4. МАРШРУТЫ (API)
 
-// 4. ЭНДПОИНТЫ (API)
-
-// Получить все работы
+// Получение всех работ
 app.get('/api/papers', async (req, res) => {
   try {
     const papers = await Paper.find().sort({ _id: -1 });
     res.json(papers);
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при получении данных' });
-  }
-});
-
-// Загрузить новую работу
-app.post('/api/papers', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Файл не был загружен' });
-    }
-
-    const newPaper = new Paper({
-      title: req.body.title,
-      desc: req.body.desc,
-      category: req.body.category,
-      author: req.body.author,
-      authorAvatar: req.body.authorAvatar,
-      pdfUrl: req.file.path // Ссылка на файл в облаке Cloudinary
-    });
-
-    await newPaper.save();
-    console.log('✅ Работа опубликована:', newPaper.title);
-    res.status(201).json(newPaper);
-  } catch (err) {
-    console.error('❌ Ошибка публикации:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 5. ЗАПУСК СЕРВЕРА
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Сервер ЮНИДА запущен на порту ${PORT}`);
+// Публикация работы
+app.post('/api/papers', upload.single('file'), async (req, res) => {
+  try {
+    const newPaper = new Paper({ ...req.body, pdfUrl: req.file.path });
+    await newPaper.save();
+    res.status(201).json(newPaper);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// УДАЛЕНИЕ РАБОТЫ (Проверьте, что этот блок есть на GitHub!)
+app.delete('/api/papers/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    console.log('Попытка удаления id:', id);
+    
+    const result = await Paper.findByIdAndDelete(id);
+    
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Работа не найдена в базе' });
+    }
+    
+    console.log('✅ Работа удалена успешно');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Ошибка при удалении:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
