@@ -8,6 +8,17 @@ require('dotenv').config();
 
 const app = express();
 
+const Paper = mongoose.model('Paper', new mongoose.Schema({
+  title: String,
+  desc: String,
+  category: String,
+  author: String,
+  authorAvatar: String,
+  pdfUrl: String,
+  collaboration: { type: String, default: 'false' }, // ДОБАВЛЕНО ЭТО ПОЛЕ
+  date: { type: String, default: () => new Date().toLocaleDateString('ru-RU') }
+}));
+
 // Настройка CORS: разрешаем DELETE и другие методы
 app.use(cors({
     origin: '*',
@@ -96,3 +107,4 @@ app.delete('/api/papers/:id', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
+
